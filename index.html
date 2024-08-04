@@ -1,0 +1,142 @@
+<html><body style="background-color:black;"><script>
+	var canvas = document.createElement('canvas');
+	Object.assign ( canvas, { width : 512, height: 512, style : "image-rendering: crisp-edges"})
+	document.body.appendChild ( canvas )
+	var ctx = canvas.getContext("2d");
+	ctx.fillStyle = "#fff"
+	ctx.fillRect(0, 0, canvas.width, canvas.height)
+	ctx.font = "32px serif";
+	ctx.fillText("Please paint...", 100, 200);
+	var memory;
+	var app;
+
+	function get_string(ptr, len) {
+		const buf = new Uint8Array(memory.buffer, ptr, len);
+		const str = new TextDecoder("utf8").decode(buf);
+		return str;
+	}
+
+	function get_vstring(ptr) {
+		console.log( ptr )
+		const b = new Uint32Array(memory.buffer, ptr, 2);
+		console.log( b[0] )
+		const buf = new Uint8Array(memory.buffer, b[0], b[1]);
+		const str = new TextDecoder("utf8").decode(buf);
+		return str;
+	}
+
+	const env = {
+		canvas_x: () => canvas.width,
+		canvas_y: () => canvas.height,
+		setpixel: (x, y, c) => {
+			ctx.fillStyle = "rgba("+c+","+c+","+c+",1)"
+			ctx.fillRect(x, y, 1, 1)
+		},
+		line: (x0,y0,x1,y1,c)=>{
+			ctx.beginPath()
+			ctx.strokeStyle = "rgb("+(c>>16&0xff)+","+(c>>8&0xff)+","+(c&0xff)+")"
+			ctx.moveTo(x0,y0)
+			ctx.lineTo(x1,y1)
+			ctx.stroke()
+		},
+		settitle: (ptr) => {
+			document.title = get_vstring(ptr)
+		},
+		teststr: ( s ) =>{
+			console.log( get_vstring( s ) )
+		},		
+		test: ( rect ) => {
+			const buf = new Int32Array(memory.buffer, rect, 4);
+			var r={
+				x : buf[0],
+				y : buf[1],
+				w : buf[2],
+                                h : buf[3],
+				}
+			console.log( r )
+			ctx.fillStyle = "rgba("+255+","+255+","+255+",1)"
+			ctx.fillRect(r.x, r.y, r.w, r.h)
+		},
+		init: ( a ) => { app=a },
+		__writeln: (ptr, len) => {
+			console.log(get_string(ptr, len));
+		},
+		__write: (ptr, len) => {
+			console.log(get_string(ptr, len));
+		},		
+		__panic_abort: (ptr, len) => {
+			throw get_string(ptr, len);
+		},
+	};
+
+	WebAssembly.instantiateStreaming(fetch("paint.wasm"), {
+		env: env,
+	}).then((res) => {
+		console.log(env.canvas_x())
+		console.log(env.canvas_y())
+		memory = res.instance.exports["memory"]
+		console.time("main.main")
+		f_mouse_down = res.instance.exports["main.App.mousedown"]
+		f_mouse_up   = res.instance.exports["main.App.mouseup"]
+		f_mouse_move = res.instance.exports["main.App.mousemove"]
+		f_key_down   = res.instance.exports["main.App.keydown"]
+		f_key_up     = res.instance.exports["main.App.keyup"]
+
+		// Mouse events
+		canvas.addEventListener ( "mousedown", (event) => f_mouse_down ( app, event.offsetX, event.offsetY ) )
+		canvas.addEventListener ( "mouseup",   (event) => f_mouse_up ( app, event.offsetX, event.offsetY ) )
+		canvas.addEventListener ( "mousemove", (event) => f_mouse_move ( app, event.offsetX, event.offsetY ) )
+		// Touch events
+		canvas.addEventListener ( "touchstart", (event) => {
+			var touch = event.touches[0]
+			var mouseEvent = new MouseEvent("mousedown", {
+                                clientX: touch.clientX, clientY: touch.clientY
+                        })
+                        canvas.dispatchEvent(mouseEvent)
+		}, false )
+		canvas.addEventListener ( "touchmove", (event) => {
+			var touch = event.touches[0];
+			var mouseEvent = new MouseEvent("mousemove", {
+				clientX: touch.clientX, clientY: touch.clientY
+			})
+			canvas.dispatchEvent(mouseEvent)
+		}, false)
+		canvas.addEventListener ( "touchend", (event) => {
+                        var touch = event.touches[0];
+                        var mouseEvent = new MouseEvent("mouseup", {
+                                clientX: touch.clientX, clientY: touch.clientY
+                        })
+                        canvas.dispatchEvent(mouseEvent)
+                }, false)
+
+
+		console.log(memory)
+		const str_key = new DataView(memory.buffer);
+		addEventListener("keydown",   (event) => {				
+				console.log(event.key, event.code)
+				kl = event.key.length
+				for (let i = 0; i < kl; i++) {
+				    str_key.setUint16(i, event.key.charCodeAt(i), true); // WebAssembly is little endian
+				}
+				for (let i=0;i<event.code.length;i++){
+				    str_key.setUint16(i+kl+1, event.code.charCodeAt(i), true);
+				}
+				f_key_down ( app, 0, kl+1 )
+		} )
+		addEventListener("keyup",   (event) => {
+				kl = event.key.length
+				for (let i = 0; i < kl; i++) {
+				    str_key.setUint16(i, event.key.charCodeAt(i), true); // WebAssembly is little endian
+				}
+				for (let i=0;i<event.code.length;i++){
+                                    str_key.setUint16(i+kl+1, event.code.charCodeAt(i), true);                                
+                                }
+
+				f_key_up ( app, 0, kl+1 )
+		} )
+
+
+		res.instance.exports["main.main"]()
+		console.timeEnd("main.main")
+	});
+</script></body></html>
